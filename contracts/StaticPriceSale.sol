@@ -14,10 +14,7 @@ interface DEUSToken {
     function mint(address to, uint256 amount) external;
 }
 
-contract StaticPriceSale is Ownable{
-
-    using SafeMath for uint112;
-    using SafeMath for uint256;
+contract StaticPriceSale is Ownable {
 
     uint256 public endBlock;
 
@@ -29,12 +26,12 @@ contract StaticPriceSale is Ownable{
 
     event ChangedEndBlock(uint256 oldEndBlock, uint256 newEndBlock);
 
-    function setEndBlock(uint256 _endBlock) public onlyOwner{
-        ChangedEndBlock(endBlock, _endBlock);
+    function setEndBlock(uint256 _endBlock) public onlyOwner {
+        emit ChangedEndBlock(endBlock, _endBlock);
         endBlock = _endBlock;
     }
 
-    constructor(uint256 _endBlock, address _deusToken, address _pair) public {
+    constructor(uint256 _endBlock, address _deusToken, address _pair) {
         require(_deusToken != address(0) && _pair != address(0), "Bad args");
 
         endBlock = _endBlock;

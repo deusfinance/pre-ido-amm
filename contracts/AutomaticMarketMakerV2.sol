@@ -97,7 +97,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	}
 
 	constructor(address _WETH, address _dbEthToken, address _power) ReentrancyGuard() {
-		require(_WETH != address(0) && _dbETHToken != address(0) && _power != address(0), "Bad args");
+		require(_WETH != address(0) && _dbEthToken != address(0) && _power != address(0), "Bad args");
 
 		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 		_setupRole(OPERATOR_ROLE, msg.sender);
@@ -179,7 +179,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 _sellAmount) internal view returns (uint256){
 
 		// validate input
-		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale && _sellAmount <= _supply);
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale && _sellAmount <= _supply, "_bancorCalculateSaleReturn Error");
 		// special case for 0 sell amount
 		if (_sellAmount == 0) {
 			return 0;
