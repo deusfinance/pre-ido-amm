@@ -17,7 +17,6 @@ contract dbETHToken is ERC20, AccessControl{
 	}
 
 	function mint(address to, uint256 amount) public {
-        // Check that the calling account has the minter role
         require(hasRole(MINTER_ROLE, msg.sender), "Caller is not a minter");
         _mint(to, amount);
     }
