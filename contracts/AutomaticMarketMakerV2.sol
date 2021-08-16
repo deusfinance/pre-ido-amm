@@ -28,7 +28,13 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 	event Buy(address user, uint256 dbEthTokenAmount, uint256 wethAmount, uint256 feeAmount);
 	event Sell(address user, uint256 wethAmount, uint256 dbEthTokenAmount, uint256 feeAmount);
-
+	event ChangeBanStatus(bool isBanSituation);
+    event AddUserToWhiteListInBan(address user);
+    event RemoveUserFromWhiteListInBan(address user);
+    event WithdrawWETH(address to, uint256 amount);
+    event ChangeUserStatusInBlackList(address user, bool isBlocked);
+    // event AddUserToBlackList(address user);
+    // event RemoveUserFromBlackList(address user);
 
 	IERC20 public dbEthToken;
 	IWETH public WETH;
@@ -39,7 +45,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	uint256 public reserveShiftAmount;
 	uint256 public daoFeeAmount;
 	address public daoWallet;
-
+	
 	uint32 public scale = 10**6;
 	uint32 public cw = 0.35 * 10**6; 
 
@@ -48,10 +54,37 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	uint256 public daoShareScale = 10**18;
 
 	mapping (address => bool) isBlackListed;
+	
+	// obtain the ban situation
+	bool private banExchange = false;
+	// show the users that are allowed to exchange in ban situation
+	mapping (address => bool) wlistAddrInBan;
 
 	modifier onlyOperator {
 		require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
 		_;
+	}
+	
+	modifier hasExchangePermission {
+	    if (banExchange){
+	        require(wlistAddrInBan[msg.sender], "Caller doesn't have permission to exchange");
+	    }
+	    _;
+	}
+	
+	function setBanStatus(bool _banExchange) external onlyOperator {
+	    banExchange = _banExchange;
+	    emit ChangeBanStatus(banExchange);
+	}
+	
+	function addWlistAddrInBan(address user) external onlyOperator {
+	    wlistAddrInBan[user] = true;
+	    emit AddUserToWhiteListInBan(user);
+	}
+	
+	function removeWlistAddrInBan(address user) external onlyOperator {
+	    wlistAddrInBan[user] = false;
+	    emit RemoveUserFromWhiteListInBan(user);
 	}
 
 	function setDaoWallet(address _daoWallet) external onlyOperator {
@@ -60,6 +93,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 	function withdrawWETH(uint256 amount, address to) external onlyOperator {
 		WETH.transfer(to, amount);
+		emit WithdrawWETH(to, amount);
 	}
 
 	function withdrawFee(uint256 amount) public {
@@ -75,10 +109,12 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 	function addBlackList(address user) external onlyOperator {
 		isBlackListed[user] = true;
+		emit ChangeUserStatusInBlackList(user, true);
 	}
 
 	function removeBlackList(address user) external onlyOperator {
 		isBlackListed[user] = false;
+		emit ChangeUserStatusInBlackList(user, false);
 	}
 
 	function init(uint256 _firstReserve, uint256 _firstSupply) external onlyOperator {
@@ -152,7 +188,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		}
 	}
 
-	function buyFor(address user, uint256 _dbEthAmount, uint256 _wethAmount) public nonReentrant() {
+	function buyFor(address user, uint256 _dbEthAmount, uint256 _wethAmount) public nonReentrant() hasExchangePermission {
 		require(!isBlackListed[user], "freezed address");
 		
 		(uint256 dbEthAmount, uint256 feeAmount) = calculatePurchaseReturn(_wethAmount);
@@ -218,7 +254,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (returnAmount - feeAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 dbEthAmount, uint256 _wethAmount) public nonReentrant() {
+	function sellFor(address user, uint256 dbEthAmount, uint256 _wethAmount) public nonReentrant() hasExchangePermission {
 		require(!isBlackListed[user], "freezed address");
 		
 		(uint256 wethAmount, uint256 feeAmount) = calculateSaleReturn(dbEthAmount);
