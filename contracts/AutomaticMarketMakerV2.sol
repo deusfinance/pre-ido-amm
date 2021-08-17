@@ -29,12 +29,10 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	event Buy(address user, uint256 dbEthTokenAmount, uint256 wethAmount, uint256 feeAmount);
 	event Sell(address user, uint256 wethAmount, uint256 dbEthTokenAmount, uint256 feeAmount);
 	event ChangeBanStatus(bool isBanSituation);
-    event AddUserToWhiteListInBan(address user);
-    event RemoveUserFromWhiteListInBan(address user);
+    event ChangeUserStatusInBannedWhiteList(address user, bool isBanned);
     event WithdrawWETH(address to, uint256 amount);
     event ChangeUserStatusInBlackList(address user, bool isBlocked);
-    // event AddUserToBlackList(address user);
-    // event RemoveUserFromBlackList(address user);
+    
 
 	IERC20 public dbEthToken;
 	IWETH public WETH;
@@ -66,7 +64,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	}
 	
 	modifier hasExchangePermission {
-	    if (banExchange){
+	    if (banExchange) {
 	        require(wlistAddrInBan[msg.sender], "Caller doesn't have permission to exchange");
 	    }
 	    _;
@@ -79,12 +77,12 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	
 	function addWlistAddrInBan(address user) external onlyOperator {
 	    wlistAddrInBan[user] = true;
-	    emit AddUserToWhiteListInBan(user);
+	    emit ChangeUserStatusInBannedWhiteList(user, true);
 	}
 	
 	function removeWlistAddrInBan(address user) external onlyOperator {
 	    wlistAddrInBan[user] = false;
-	    emit RemoveUserFromWhiteListInBan(user);
+	    emit ChangeUserStatusInBannedWhiteList(user, false);
 	}
 
 	function setDaoWallet(address _daoWallet) external onlyOperator {
