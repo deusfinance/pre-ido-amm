@@ -28,8 +28,8 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 	event Buy(address user, uint256 dbEthTokenAmount, uint256 wethAmount, uint256 feeAmount);
 	event Sell(address user, uint256 wethAmount, uint256 dbEthTokenAmount, uint256 feeAmount);
-	event ChangeBanStatus(bool isBanSituation);
-    event ChangeUserStatusInBannedWhiteList(address user, bool isBanned);
+	event ChangeDisableExchange(bool isDisableExhange);
+    event ChangeUserStatusInWhiteList(address user, bool isBanned);
     event WithdrawWETH(address to, uint256 amount);
     event ChangeUserStatusInBlackList(address user, bool isBlocked);
     
@@ -44,7 +44,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	uint256 public daoFeeAmount;
 	address public daoWallet;
 	
-	uint32 public scale = 10**6;
+	uint32 public cwScale = 10**6;
 	uint32 public cw = 0.35 * 10**6; 
 
 
@@ -54,35 +54,35 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	mapping (address => bool) isBlackListed;
 	
 	// obtain the ban situation
-	bool private banExchange = false;
-	// show the users that are allowed to exchange in ban situation
-	mapping (address => bool) wlistAddrInBan;
+	bool private disableExchange = false;
+	// show users that are allowed to exchange in disableExchange situation
+	mapping (address => bool) whiteListAddr;
 
 	modifier onlyOperator {
 		require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
 		_;
 	}
 	
+	modifier onlyFeeCollector {
+		require(hasRole(FEE_COLLECTOR_ROLE, msg.sender), "Caller is not a FeeCollector");
+		_;
+	}
+	
 	modifier hasExchangePermission {
-	    if (banExchange) {
-	        require(wlistAddrInBan[msg.sender], "Caller doesn't have permission to exchange");
+	    if (disableExchange) {
+	        require(whiteListAddr[msg.sender], "Caller doesn't have permission to exchange");
 	    }
 	    _;
 	}
 	
-	function setBanStatus(bool _banExchange) external onlyOperator {
-	    banExchange = _banExchange;
-	    emit ChangeBanStatus(banExchange);
+	function setDisableExchange(bool _disableExchange) external onlyOperator {
+	    disableExchange = _disableExchange;
+	    emit ChangeDisableExchange(disableExchange);
 	}
 	
-	function addWlistAddrInBan(address user) external onlyOperator {
-	    wlistAddrInBan[user] = true;
-	    emit ChangeUserStatusInBannedWhiteList(user, true);
-	}
-	
-	function removeWlistAddrInBan(address user) external onlyOperator {
-	    wlistAddrInBan[user] = false;
-	    emit ChangeUserStatusInBannedWhiteList(user, false);
+	function setWhiteListAddr(address user, bool status) external onlyOperator {
+	    whiteListAddr[user] = status;
+	    emit ChangeUserStatusInWhiteList(user, status);
 	}
 
 	function setDaoWallet(address _daoWallet) external onlyOperator {
@@ -94,32 +94,27 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		emit WithdrawWETH(to, amount);
 	}
 
-	function withdrawFee(uint256 amount) public {
-		require(hasRole(FEE_COLLECTOR_ROLE, msg.sender), "Caller is not an FeeCollector");
+	function withdrawFee(uint256 amount, address to) public onlyFeeCollector {
 		require(amount <= daoFeeAmount, "amount is bigger than daoFeeAmount");
 		daoFeeAmount = daoFeeAmount - amount;
-		WETH.transfer(daoWallet, amount);
+		WETH.transfer(to, amount);
+		emit WithdrawWETH(to, amount);
 	}
 
-	function withdrawTotalFee() external {
-		withdrawFee(daoFeeAmount);
+	function withdrawTotalFee(address to) external {
+		withdrawFee(daoFeeAmount, to);
 	}
 
-	function addBlackList(address user) external onlyOperator {
-		isBlackListed[user] = true;
+	function setBlackListStatus(address user, bool status) external onlyOperator {
+		isBlackListed[user] = status;
 		emit ChangeUserStatusInBlackList(user, true);
-	}
-
-	function removeBlackList(address user) external onlyOperator {
-		isBlackListed[user] = false;
-		emit ChangeUserStatusInBlackList(user, false);
 	}
 
 	function init(uint256 _firstReserve, uint256 _firstSupply) external onlyOperator {
 		reserve = _firstReserve;
 		firstReserve = _firstReserve;
 		firstSupply = _firstSupply;
-		reserveShiftAmount = reserve * (scale - cw) / scale;
+		reserveShiftAmount = reserve * (cwScale - cw) / cwScale;
 	}
 
 	function setDaoShare(uint256 _daoShare) external onlyOperator {
@@ -149,7 +144,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint32 _connectorWeight,
 		uint256 _depositAmount) internal view returns (uint256){
 		// validate input
-		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale, "_bancorCalculateSaleReturn() Error");
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= cwScale, "_bancorCalculateSaleReturn() Error");
 
 		// special case for 0 deposit amount
 		if (_depositAmount == 0) {
@@ -159,7 +154,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 result;
 		uint8 precision;
 		uint256 baseN = _depositAmount + _connectorBalance;
-		(result, precision) = Power.power(baseN, _connectorBalance, _connectorWeight, scale);
+		(result, precision) = Power.power(baseN, _connectorBalance, _connectorWeight, cwScale);
 		uint256 newTokenSupply = _supply * result >> precision;
 		return newTokenSupply - _supply;
 	}
@@ -213,7 +208,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 _sellAmount) internal view returns (uint256){
 
 		// validate input
-		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale && _sellAmount <= _supply, "_bancorCalculateSaleReturn Error");
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= cwScale && _sellAmount <= _supply, "_bancorCalculateSaleReturn Error");
 		// special case for 0 sell amount
 		if (_sellAmount == 0) {
 			return 0;
@@ -226,7 +221,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 result;
 		uint8 precision;
 		uint256 baseD = _supply - _sellAmount;
-		(result, precision) = Power.power(_supply, baseD, scale, _connectorWeight);
+		(result, precision) = Power.power(_supply, baseD, cwScale, _connectorWeight);
 		uint256 oldBalance = _connectorBalance * result;
 		uint256 newBalance = _connectorBalance << precision;
 		return (oldBalance - newBalance) / result;
