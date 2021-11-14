@@ -23,16 +23,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 	bytes32 public constant FEE_COLLECTOR_ROLE = keccak256("FEE_COLLECTOR_ROLE");
 
-	event Buy(address user, uint256 dbEthTokenAmount, uint256 collateralAmount, uint256 feeAmount);
-	event Sell(address user, uint256 collateralAmount, uint256 dbEthTokenAmount, uint256 feeAmount);
+	event Buy(address user, uint256 idoAmount, uint256 collateralAmount, uint256 feeAmount);
+	event Sell(address user, uint256 collateralAmount, uint256 idoAmount, uint256 feeAmount);
 	event ChangeDisableExchange(bool isDisableExhange);
     event ChangeUserStatusInWhiteList(address user, bool isBanned);
     event withdrawCollateral(address to, uint256 amount);
     event ChangeUserStatusInBlackList(address user, bool isBlocked);
     
 
-	IERC20 public dbEthToken;
-	IERC20 public collateralToken;
+	IERC20 public idoAsset;
+	IERC20 public collateralAsset;
 	IPower public Power;
 	uint256 public reserve;
 	uint256 public firstSupply;
@@ -87,14 +87,14 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	}
 
 	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
-		collateralToken.transfer(to, amount);
+		collateralAsset.transfer(to, amount);
 		emit withdrawCollateral(to, amount);
 	}
 
 	function withdrawFee(uint256 amount, address to) public onlyFeeCollector {
 		require(amount <= daoFeeAmount, "amount is bigger than daoFeeAmount");
 		daoFeeAmount = daoFeeAmount - amount;
-		collateralToken.transfer(to, amount);
+		collateralAsset.transfer(to, amount);
 		emit withdrawCollateral(to, amount);
 	}
 
@@ -122,16 +122,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		revert();
 	}
 
-	constructor(address _collateralToken, address _dbEthToken, address _power) ReentrancyGuard() {
-		require(_collateralToken != address(0) && _dbEthToken != address(0) && _power != address(0), "Bad args");
+	constructor(address _collateralAsset, address _idoAsset, address _power) ReentrancyGuard() {
+		require(_collateralAsset != address(0) && _idoAsset != address(0) && _power != address(0), "Bad args");
 
 		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 		_setupRole(OPERATOR_ROLE, msg.sender);
 		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
 
 		daoWallet = msg.sender;
-		collateralToken = IERC20(_collateralToken);
-		dbEthToken = IERC20(_dbEthToken);
+		collateralAsset = IERC20(_collateralAsset);
+		idoAsset = IERC20(_idoAsset);
 		Power = IPower(_power);
 	}
 
@@ -160,15 +160,15 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 		uint256 feeAmount = collateralAmount * daoShare / daoShareScale;
 		collateralAmount = collateralAmount - feeAmount;
-		uint256 supply = dbEthToken.totalSupply();
+		uint256 supply = idoAsset.totalSupply();
 		
 		if (supply < firstSupply){
 			if  (reserve + collateralAmount > firstReserve){
 				uint256 exteraDeusAmount = reserve + collateralAmount - firstReserve;
-				uint256 dbEthAmount = firstSupply - supply;
+				uint256 idoAmount = firstSupply - supply;
 
-				dbEthAmount = dbEthAmount + _bancorCalculatePurchaseReturn(firstSupply, firstReserve - reserveShiftAmount, cw, exteraDeusAmount);
-				return (dbEthAmount, feeAmount);
+				idoAmount = idoAmount + _bancorCalculatePurchaseReturn(firstSupply, firstReserve - reserveShiftAmount, cw, exteraDeusAmount);
+				return (idoAmount, feeAmount);
 			}
 			else{
 				return (supply * collateralAmount / reserve, feeAmount);
@@ -178,24 +178,24 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		}
 	}
 
-	function buyFor(address user, uint256 _dbEthAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
+	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
 		require(!isBlackListed[user], "freezed address");
 		
-		(uint256 dbEthAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
-		require(dbEthAmount >= _dbEthAmount, 'price changed');
+		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
+		require(idoAmount >= _idoAmount, 'price changed');
 
 		reserve = reserve + _collateralAmount - feeAmount;
 
-		collateralToken.transferFrom(msg.sender, address(this), _collateralAmount);
-		dbEthToken.mint(user, dbEthAmount);
+		collateralAsset.transferFrom(msg.sender, address(this), _collateralAmount);
+		idoAsset.mint(user, idoAmount);
 
 		daoFeeAmount = daoFeeAmount + feeAmount;
 
-		emit Buy(user, dbEthAmount, _collateralAmount, feeAmount);
+		emit Buy(user, idoAmount, _collateralAmount, feeAmount);
 	}
 
-	function buy(uint256 dbEthTokenAmount, uint256 collateralAmount) public {
-		buyFor(msg.sender, dbEthTokenAmount, collateralAmount);
+	function buy(uint256 idoAmount, uint256 collateralAmount) public {
+		buyFor(msg.sender, idoAmount, collateralAmount);
 	}
 
 	function _bancorCalculateSaleReturn(
@@ -224,43 +224,43 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (oldBalance - newBalance) / result;
 	}
 
-	function calculateSaleReturn(uint256 dbEthAmount) public view returns (uint256, uint256) {
-		uint256 supply = dbEthToken.totalSupply();
+	function calculateSaleReturn(uint256 idoAmount) public view returns (uint256, uint256) {
+		uint256 supply = idoAsset.totalSupply();
 		uint256 returnAmount;
 
 		if (supply > firstSupply) {
-			if (firstSupply > supply - dbEthAmount) {
-				uint256 exteraFutureAmount = firstSupply - (supply - dbEthAmount);
+			if (firstSupply > supply - idoAmount) {
+				uint256 exteraFutureAmount = firstSupply - (supply - idoAmount);
 				uint256 collateralAmount = reserve - firstReserve;
 				returnAmount = collateralAmount + (firstReserve * exteraFutureAmount / firstSupply);
 
 			} else {
-				returnAmount = _bancorCalculateSaleReturn(supply, reserve - reserveShiftAmount, cw, dbEthAmount);
+				returnAmount = _bancorCalculateSaleReturn(supply, reserve - reserveShiftAmount, cw, idoAmount);
 			}
 		} else {
-			returnAmount = reserve * dbEthAmount / supply;
+			returnAmount = reserve * idoAmount / supply;
 		}
 		uint256 feeAmount = returnAmount * daoShare / daoShareScale;
 		return (returnAmount - feeAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 dbEthAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
+	function sellFor(address user, uint256 idoAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
 		require(!isBlackListed[user], "freezed address");
 		
-		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(dbEthAmount);
+		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
 		require(collateralAmount >= _collateralAmount, 'price changed');
 
 		reserve = reserve - (collateralAmount + feeAmount);
-		dbEthToken.burn(msg.sender, dbEthAmount);
-		collateralToken.transfer(msg.sender, collateralAmount);
+		idoAsset.burn(msg.sender, idoAmount);
+		collateralAsset.transfer(msg.sender, collateralAmount);
 
 		daoFeeAmount = daoFeeAmount + feeAmount;
 
-		emit Sell(user, collateralAmount, dbEthAmount, feeAmount);
+		emit Sell(user, collateralAmount, idoAmount, feeAmount);
 	}
 
-	function sell(uint256 dbEthTokenAmount, uint256 collateralAmount) public {
-		sellFor(msg.sender, dbEthTokenAmount, collateralAmount);
+	function sell(uint256 idoAmount, uint256 collateralAmount) public {
+		sellFor(msg.sender, idoAmount, collateralAmount);
 	}
 }
 
