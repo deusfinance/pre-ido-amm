@@ -5,7 +5,7 @@ pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
+// TODO: import openzepplin IERC20
 interface IERC20 {
 	function totalSupply() external view returns (uint256);
 	function mint(address to, uint256 amount) external;
@@ -19,41 +19,46 @@ interface IPower {
 }
 
 contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
+	// TODO: add start block
+	// TODO: change require messages
+	// TODO: refactor code style
+	// TODO: add reverse view functions (Hasan)
 
 	bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 	bytes32 public constant FEE_COLLECTOR_ROLE = keccak256("FEE_COLLECTOR_ROLE");
 
 	event Buy(address user, uint256 idoAmount, uint256 collateralAmount, uint256 feeAmount);
 	event Sell(address user, uint256 collateralAmount, uint256 idoAmount, uint256 feeAmount);
-	event ChangeDisableExchange(bool isDisableExhange);
-    event ChangeUserStatusInWhiteList(address user, bool isBanned);
-    event withdrawCollateral(address to, uint256 amount);
-    event ChangeUserStatusInBlackList(address user, bool isBlocked);
-    
+	event WithdrawCollateral(address to, uint256 amount);
+	event ChangeDisableExchange(bool isDisableExhange);  // TODO: change name 
+	event ChangeUserStatusInWhiteList(address user, bool isBanned);  // TODO: change name 
+	event ChangeUserStatusInBlackList(address user, bool isBlocked);  // TODO: change name 
 
-	IERC20 public idoAsset;
-	IERC20 public collateralAsset;
-	IPower public Power;
-	uint256 public reserve;
+
+	IERC20 public idoAsset;  // TODO: change to address
+	IERC20 public collateralAsset;  // TODO: change to address
+	IPower public Power;  // TODO: change to address
+	uint256 public reserve;  // TODO: change to collateralReserve
+	
+	// TODO: check static sale part
 	uint256 public firstSupply;
 	uint256 public firstReserve;
 	uint256 public reserveShiftAmount;
-	uint256 public daoFeeAmount;
-	address public daoWallet;
-	
+
+	uint256 public daoFeeAmount;  // TODO: change dao to deployer and add total
+	address public daoWallet;  // TODO: remove
+	uint256 public daoShare = 5 * 10**15;  // TODO: rename to fee
+	uint256 public daoShareScale = 10**18;
+
 	uint32 public cwScale = 10**6;
 	uint32 public cw = 0.35 * 10**6; 
 
-
-	uint256 public daoShare = 5 * 10**15;
-	uint256 public daoShareScale = 10**18;
-
-	mapping (address => bool) isBlackListed;
-	
 	// obtain the ban situation
-	bool private disableExchange = false;
-	// show users that are allowed to exchange in disableExchange situation
-	mapping (address => bool) whiteListAddr;
+	bool public disableExchange = false;  // TODO: change name
+
+	mapping (address => bool) isBlackListed;  // TODO: change name 
+	mapping (address => bool) whiteListAddr;  // TODO: change name // show users that are allowed to exchange in disableExchange situation
+	
 
 	modifier onlyOperator {
 		require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
@@ -64,54 +69,44 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		require(hasRole(FEE_COLLECTOR_ROLE, msg.sender), "Caller is not a FeeCollector");
 		_;
 	}
-	
+
+	// TODO: change name	
 	modifier hasExchangePermission {
-	    if (disableExchange) {
-	        require(whiteListAddr[msg.sender], "Caller doesn't have permission to exchange");
-	    }
-	    _;
+		if (disableExchange) {
+			require(whiteListAddr[msg.sender], "Caller doesn't have permission to exchange");
+		}
+		_;
 	}
 	
-	function setDisableExchange(bool _disableExchange) external onlyOperator {
-	    disableExchange = _disableExchange;
-	    emit ChangeDisableExchange(disableExchange);
+	function setDisableExchange(bool _disableExchange) external onlyOperator {  // TODO: change name
+		disableExchange = _disableExchange;
+		emit ChangeDisableExchange(disableExchange);
 	}
 	
-	function setWhiteListAddr(address user, bool status) external onlyOperator {
-	    whiteListAddr[user] = status;
-	    emit ChangeUserStatusInWhiteList(user, status);
+	function setWhiteListAddr(address user, bool status) external onlyOperator {  // TODO: change name
+		whiteListAddr[user] = status;
+		emit ChangeUserStatusInWhiteList(user, status);
 	}
 
-	function setDaoWallet(address _daoWallet) external onlyOperator {
+	function setBlackListStatus(address user, bool status) external onlyOperator {  // TODO: change name
+		isBlackListed[user] = status;
+		emit ChangeUserStatusInBlackList(user, true);
+	}
+
+	function setDaoWallet(address _daoWallet) external onlyOperator {  // TODO: remove
 		daoWallet = _daoWallet;
 	}
 
 	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
 		collateralAsset.transfer(to, amount);
-		emit withdrawCollateral(to, amount);
+		emit WithdrawCollateral(to, amount);
 	}
 
-	function withdrawFee(uint256 amount, address to) public onlyFeeCollector {
+	function withdrawFee(uint256 amount, address to) external onlyFeeCollector {
 		require(amount <= daoFeeAmount, "amount is bigger than daoFeeAmount");
 		daoFeeAmount = daoFeeAmount - amount;
 		collateralAsset.transfer(to, amount);
-		emit withdrawCollateral(to, amount);
-	}
-
-	function withdrawTotalFee(address to) external {
-		withdrawFee(daoFeeAmount, to);
-	}
-
-	function setBlackListStatus(address user, bool status) external onlyOperator {
-		isBlackListed[user] = status;
-		emit ChangeUserStatusInBlackList(user, true);
-	}
-
-	function init(uint256 _firstReserve, uint256 _firstSupply) external onlyOperator {
-		reserve = _firstReserve;
-		firstReserve = _firstReserve;
-		firstSupply = _firstSupply;
-		reserveShiftAmount = reserve * (cwScale - cw) / cwScale;
+		emit WithdrawCollateral(to, amount);  // TODO: new event
 	}
 
 	function setDaoShare(uint256 _daoShare) external onlyOperator {
@@ -125,6 +120,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	constructor(address _collateralAsset, address _idoAsset, address _power) ReentrancyGuard() {
 		require(_collateralAsset != address(0) && _idoAsset != address(0) && _power != address(0), "Bad args");
 
+		// TODO: what are new roles? role management.
 		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 		_setupRole(OPERATOR_ROLE, msg.sender);
 		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
@@ -133,6 +129,14 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		collateralAsset = IERC20(_collateralAsset);
 		idoAsset = IERC20(_idoAsset);
 		Power = IPower(_power);
+	}
+
+	function init(uint256 _firstReserve, uint256 _firstSupply) external onlyOperator {
+		// TODO: add cw to args
+		reserve = _firstReserve;
+		firstReserve = _firstReserve;
+		firstSupply = _firstSupply;
+		reserveShiftAmount = reserve * (cwScale - cw) / cwScale;
 	}
 
 	function _bancorCalculatePurchaseReturn(
@@ -179,7 +183,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	}
 
 	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
-		require(!isBlackListed[user], "freezed address");
+		require(!isBlackListed[user], "freezed address");  // TODO: merge whitelist & blacklist
 		
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
 		require(idoAmount >= _idoAmount, 'price changed');
@@ -194,7 +198,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		emit Buy(user, idoAmount, _collateralAmount, feeAmount);
 	}
 
-	function buy(uint256 idoAmount, uint256 collateralAmount) public {
+	function buy(uint256 idoAmount, uint256 collateralAmount) external {
 		buyFor(msg.sender, idoAmount, collateralAmount);
 	}
 
@@ -259,7 +263,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		emit Sell(user, collateralAmount, idoAmount, feeAmount);
 	}
 
-	function sell(uint256 idoAmount, uint256 collateralAmount) public {
+	function sell(uint256 idoAmount, uint256 collateralAmount) external {
 		sellFor(msg.sender, idoAmount, collateralAmount);
 	}
 }
