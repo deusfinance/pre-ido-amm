@@ -10,15 +10,12 @@ interface IERC20 {
 	function totalSupply() external view returns (uint256);
 	function mint(address to, uint256 amount) external;
 	function burn(address from, uint256 amount) external;
+	function transfer(address recipient, uint256 amount) external returns (bool);
+	function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
 
 interface IPower {
 	function power(uint256 _baseN, uint256 _baseD, uint32 _expN, uint32 _expD) external view returns (uint256, uint8);
-}
-
-interface IWETH {
-	function transfer(address recipient, uint256 amount) external returns (bool);
-	function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
 
 contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
@@ -26,16 +23,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 	bytes32 public constant FEE_COLLECTOR_ROLE = keccak256("FEE_COLLECTOR_ROLE");
 
-	event Buy(address user, uint256 dbEthTokenAmount, uint256 wethAmount, uint256 feeAmount);
-	event Sell(address user, uint256 wethAmount, uint256 dbEthTokenAmount, uint256 feeAmount);
+	event Buy(address user, uint256 dbEthTokenAmount, uint256 collateralAmount, uint256 feeAmount);
+	event Sell(address user, uint256 collateralAmount, uint256 dbEthTokenAmount, uint256 feeAmount);
 	event ChangeDisableExchange(bool isDisableExhange);
     event ChangeUserStatusInWhiteList(address user, bool isBanned);
-    event WithdrawWETH(address to, uint256 amount);
+    event withdrawCollateral(address to, uint256 amount);
     event ChangeUserStatusInBlackList(address user, bool isBlocked);
     
 
 	IERC20 public dbEthToken;
-	IWETH public WETH;
+	IERC20 public collateralToken;
 	IPower public Power;
 	uint256 public reserve;
 	uint256 public firstSupply;
@@ -89,16 +86,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		daoWallet = _daoWallet;
 	}
 
-	function withdrawWETH(uint256 amount, address to) external onlyOperator {
-		WETH.transfer(to, amount);
-		emit WithdrawWETH(to, amount);
+	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
+		collateralToken.transfer(to, amount);
+		emit withdrawCollateral(to, amount);
 	}
 
 	function withdrawFee(uint256 amount, address to) public onlyFeeCollector {
 		require(amount <= daoFeeAmount, "amount is bigger than daoFeeAmount");
 		daoFeeAmount = daoFeeAmount - amount;
-		WETH.transfer(to, amount);
-		emit WithdrawWETH(to, amount);
+		collateralToken.transfer(to, amount);
+		emit withdrawCollateral(to, amount);
 	}
 
 	function withdrawTotalFee(address to) external {
@@ -125,15 +122,15 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		revert();
 	}
 
-	constructor(address _WETH, address _dbEthToken, address _power) ReentrancyGuard() {
-		require(_WETH != address(0) && _dbEthToken != address(0) && _power != address(0), "Bad args");
+	constructor(address _collateralToken, address _dbEthToken, address _power) ReentrancyGuard() {
+		require(_collateralToken != address(0) && _dbEthToken != address(0) && _power != address(0), "Bad args");
 
 		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 		_setupRole(OPERATOR_ROLE, msg.sender);
 		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
 
 		daoWallet = msg.sender;
-		WETH = IWETH(_WETH);
+		collateralToken = IERC20(_collateralToken);
 		dbEthToken = IERC20(_dbEthToken);
 		Power = IPower(_power);
 	}
@@ -159,46 +156,46 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return newTokenSupply - _supply;
 	}
 
-	function calculatePurchaseReturn(uint256 wethAmount) public view returns (uint256, uint256) {
+	function calculatePurchaseReturn(uint256 collateralAmount) public view returns (uint256, uint256) {
 
-		uint256 feeAmount = wethAmount * daoShare / daoShareScale;
-		wethAmount = wethAmount - feeAmount;
+		uint256 feeAmount = collateralAmount * daoShare / daoShareScale;
+		collateralAmount = collateralAmount - feeAmount;
 		uint256 supply = dbEthToken.totalSupply();
 		
 		if (supply < firstSupply){
-			if  (reserve + wethAmount > firstReserve){
-				uint256 exteraDeusAmount = reserve + wethAmount - firstReserve;
+			if  (reserve + collateralAmount > firstReserve){
+				uint256 exteraDeusAmount = reserve + collateralAmount - firstReserve;
 				uint256 dbEthAmount = firstSupply - supply;
 
 				dbEthAmount = dbEthAmount + _bancorCalculatePurchaseReturn(firstSupply, firstReserve - reserveShiftAmount, cw, exteraDeusAmount);
 				return (dbEthAmount, feeAmount);
 			}
 			else{
-				return (supply * wethAmount / reserve, feeAmount);
+				return (supply * collateralAmount / reserve, feeAmount);
 			}
 		}else{
-			return (_bancorCalculatePurchaseReturn(supply, reserve - reserveShiftAmount, cw, wethAmount), feeAmount);
+			return (_bancorCalculatePurchaseReturn(supply, reserve - reserveShiftAmount, cw, collateralAmount), feeAmount);
 		}
 	}
 
-	function buyFor(address user, uint256 _dbEthAmount, uint256 _wethAmount) public nonReentrant() hasExchangePermission {
+	function buyFor(address user, uint256 _dbEthAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
 		require(!isBlackListed[user], "freezed address");
 		
-		(uint256 dbEthAmount, uint256 feeAmount) = calculatePurchaseReturn(_wethAmount);
+		(uint256 dbEthAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
 		require(dbEthAmount >= _dbEthAmount, 'price changed');
 
-		reserve = reserve + _wethAmount - feeAmount;
+		reserve = reserve + _collateralAmount - feeAmount;
 
-		WETH.transferFrom(msg.sender, address(this), _wethAmount);
+		collateralToken.transferFrom(msg.sender, address(this), _collateralAmount);
 		dbEthToken.mint(user, dbEthAmount);
 
 		daoFeeAmount = daoFeeAmount + feeAmount;
 
-		emit Buy(user, dbEthAmount, _wethAmount, feeAmount);
+		emit Buy(user, dbEthAmount, _collateralAmount, feeAmount);
 	}
 
-	function buy(uint256 dbEthTokenAmount, uint256 wethAmount) public {
-		buyFor(msg.sender, dbEthTokenAmount, wethAmount);
+	function buy(uint256 dbEthTokenAmount, uint256 collateralAmount) public {
+		buyFor(msg.sender, dbEthTokenAmount, collateralAmount);
 	}
 
 	function _bancorCalculateSaleReturn(
@@ -234,8 +231,8 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		if (supply > firstSupply) {
 			if (firstSupply > supply - dbEthAmount) {
 				uint256 exteraFutureAmount = firstSupply - (supply - dbEthAmount);
-				uint256 wethAmount = reserve - firstReserve;
-				returnAmount = wethAmount + (firstReserve * exteraFutureAmount / firstSupply);
+				uint256 collateralAmount = reserve - firstReserve;
+				returnAmount = collateralAmount + (firstReserve * exteraFutureAmount / firstSupply);
 
 			} else {
 				returnAmount = _bancorCalculateSaleReturn(supply, reserve - reserveShiftAmount, cw, dbEthAmount);
@@ -247,23 +244,23 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (returnAmount - feeAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 dbEthAmount, uint256 _wethAmount) public nonReentrant() hasExchangePermission {
+	function sellFor(address user, uint256 dbEthAmount, uint256 _collateralAmount) public nonReentrant() hasExchangePermission {
 		require(!isBlackListed[user], "freezed address");
 		
-		(uint256 wethAmount, uint256 feeAmount) = calculateSaleReturn(dbEthAmount);
-		require(wethAmount >= _wethAmount, 'price changed');
+		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(dbEthAmount);
+		require(collateralAmount >= _collateralAmount, 'price changed');
 
-		reserve = reserve - (wethAmount + feeAmount);
+		reserve = reserve - (collateralAmount + feeAmount);
 		dbEthToken.burn(msg.sender, dbEthAmount);
-		WETH.transfer(msg.sender, wethAmount);
+		collateralToken.transfer(msg.sender, collateralAmount);
 
 		daoFeeAmount = daoFeeAmount + feeAmount;
 
-		emit Sell(user, wethAmount, dbEthAmount, feeAmount);
+		emit Sell(user, collateralAmount, dbEthAmount, feeAmount);
 	}
 
-	function sell(uint256 dbEthTokenAmount, uint256 wethAmount) public {
-		sellFor(msg.sender, dbEthTokenAmount, wethAmount);
+	function sell(uint256 dbEthTokenAmount, uint256 collateralAmount) public {
+		sellFor(msg.sender, dbEthTokenAmount, collateralAmount);
 	}
 }
 
