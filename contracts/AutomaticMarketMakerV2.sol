@@ -181,7 +181,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		}
 	}
 
-	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr {
+	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) {
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
 		require(idoAmount >= _idoAmount, 'price changed');
 
@@ -245,7 +245,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (returnAmount - feeAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr {
+	function sellFor(address user, uint256 idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) {
 
 		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
 		require(collateralAmount >= _collateralAmount, 'price changed');
