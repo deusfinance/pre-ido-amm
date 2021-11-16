@@ -5,7 +5,6 @@ pragma solidity ^0.8.4;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-// TODO: import openzepplin IERC20
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 interface IERC20 {
@@ -21,7 +20,6 @@ interface IPower {
 }
 
 contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
-	// TODO: add start block
 	// TODO: change require messages
 	// TODO: refactor code style
 	// TODO: add reverse view functions (Hasan)
@@ -29,18 +27,9 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 	bytes32 public constant FEE_COLLECTOR_ROLE = keccak256("FEE_COLLECTOR_ROLE");
 
-	event Buy(address user, uint256 idoAmount, uint256 collateralAmount, uint256 feeAmount);
-	event Sell(address user, uint256 collateralAmount, uint256 idoAmount, uint256 feeAmount);
-	event CollateralTransferred(address to, uint256 amount);
-	event FeeTransferred(address to, uint256 amount);
-	event WhiteListActivated(bool activeWhiteList);  // TODO: change name
-	event WhiteListAddrSet(address user, bool isBanned);  // TODO: change name 
-	event BlackListAddrSet(address user, bool isBlocked);  // TODO: change name 
-
-
-	IERC20 public idoAsset;  // TODO: change to address
-	IERC20 public collateralAsset;  // TODO: change to address
-	IPower public Power;  // TODO: change to address
+	address  public idoAddress;  // TODO: change to address
+	address  public collateralAddress;  // TODO: change to address
+	address  public powerAddress;  // TODO: change to address
 	uint256 public collateralReverse;
 	
 	// TODO: check static sale part
@@ -48,7 +37,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	uint256 public firstReserve;
 	uint256 public reserveShiftAmount;
 
-	uint256 public daoFeeAmount;  // TODO: change dao to deployer and add total
+	uint256 public deployerTotalFeeAmount;
 	uint256 public fee = 5 * 10**15; 
 	uint256 public feeScale = 10**18;
 
@@ -57,6 +46,8 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 	// switch between whitelist and blacklist
 	bool public activeWhiteList = false;  // TODO: change name
+
+	uint startBlock; // TODO: is data type ok?
 
 	mapping (address => bool) blackListAddr;  // TODO: change name
 	mapping (address => bool) whiteListAddr;  // TODO: change name // show users that are allowed to exchange when WhiteList is active
@@ -81,6 +72,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		}
 		_;
 	}
+
+	// TODO: where should we use this modifier?
+	modifier checkStartBlock {
+		require(block.number >= startBlock, "Current block number is less than start block number");
+		_;
+	}
+
+	function setStartBlock(uint _startBlock) {
+		startBlock = _startBlock;
+	}
 	
 	function activateWhiteList(bool _activeWhiteList) external onlyOperator {  // TODO: change name
 		activeWhiteList = _activeWhiteList;
@@ -98,14 +99,14 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	}
 
 	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
-		collateralAsset.transfer(to, amount);
+		IERC20(collateralAddress).transfer(to, amount);
 		emit CollateralTransferred(to, amount);
 	}
 
 	function withdrawFee(uint256 amount, address to) external onlyFeeCollector {
-		require(amount <= daoFeeAmount, "amount is bigger than daoFeeAmount");
-		daoFeeAmount = daoFeeAmount - amount;
-		collateralAsset.transfer(to, amount);
+		require(amount <= deployerTotalFeeAmount, "amount is bigger than deployerTotalFeeAmount");
+		deployerTotalFeeAmount = deployerTotalFeeAmount - amount;
+		IERC20(collateralAddress).transfer(to, amount);
 		emit FeeTransferred(to, amount);
 	}
 
@@ -117,17 +118,17 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		revert();
 	}
 
-	constructor(address _collateralAsset, address _idoAsset, address _power) ReentrancyGuard() {
-		require(_collateralAsset != address(0) && _idoAsset != address(0) && _power != address(0), "Bad args");
+	constructor(address _collateralAddress, address _idoAddress, address _powerAddress) ReentrancyGuard() {
+		require(_collateralAddress != address(0) && _idoAddress != address(0) && _powerAddress != address(0), "Bad args");
 
 		// TODO: what are new roles? role management.
 		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
 		_setupRole(OPERATOR_ROLE, msg.sender);
 		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
 
-		collateralAsset = IERC20(_collateralAsset);
-		idoAsset = IERC20(_idoAsset);
-		Power = IPower(_power);
+		collateralAddress = _collateralAddress;
+		idoAddress = _idoAddress;
+		powerAddress = _powerAddress;
 	}
 
 	function init(uint256 _firstReserve, uint256 _firstSupply, uint32 _cw) external onlyOperator {
@@ -154,7 +155,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 result;
 		uint8 precision;
 		uint256 baseN = _depositAmount + _connectorBalance;
-		(result, precision) = Power.power(baseN, _connectorBalance, _connectorWeight, cwScale);
+		(result, precision) = IPower(powerAddress).power(baseN, _connectorBalance, _connectorWeight, cwScale);
 		uint256 newTokenSupply = _supply * result >> precision;
 		return newTokenSupply - _supply;
 	}
@@ -163,7 +164,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 		uint256 feeAmount = collateralAmount * fee / feeScale;
 		collateralAmount = collateralAmount - feeAmount;
-		uint256 supply = idoAsset.totalSupply();
+		uint256 supply = IERC20(idoAddress).totalSupply();
 		
 		if (supply < firstSupply){
 			if  (collateralReverse + collateralAmount > firstReserve){
@@ -181,16 +182,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		}
 	}
 
-	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) {
+	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) checkStartBlock(){
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
 		require(idoAmount >= _idoAmount, 'price changed');
 
 		collateralReverse = collateralReverse + _collateralAmount - feeAmount;
 
-		collateralAsset.transferFrom(msg.sender, address(this), _collateralAmount);
-		idoAsset.mint(user, idoAmount);
+		IERC20(collateralAddress).transferFrom(msg.sender, address(this), _collateralAmount);
+		IERC20(idoAddress).mint(user, idoAmount);
 
-		daoFeeAmount = daoFeeAmount + feeAmount;
+		deployerTotalFeeAmount = deployerTotalFeeAmount + feeAmount;
 
 		emit Buy(user, idoAmount, _collateralAmount, feeAmount);
 	}
@@ -219,21 +220,21 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 result;
 		uint8 precision;
 		uint256 baseD = _supply - _sellAmount;
-		(result, precision) = Power.power(_supply, baseD, cwScale, _connectorWeight);
+		(result, precision) = IPower(powerAddress).power(_supply, baseD, cwScale, _connectorWeight);
 		uint256 oldBalance = _connectorBalance * result;
 		uint256 newBalance = _connectorBalance << precision;
 		return (oldBalance - newBalance) / result;
 	}
 
 	function calculateSaleReturn(uint256 idoAmount) public view returns (uint256, uint256) {
-		uint256 supply = idoAsset.totalSupply();
+		uint256 supply = IERC20(idoAddress).totalSupply();
 		uint256 returnAmount;
 
 		if (supply > firstSupply) {
 			if (firstSupply > supply - idoAmount) {
-				uint256 exteraFutureAmount = firstSupply - (supply - idoAmount);
+				uint256 extraFutureAmount = firstSupply - (supply - idoAmount);
 				uint256 collateralAmount = collateralReverse - firstReserve;
-				returnAmount = collateralAmount + (firstReserve * exteraFutureAmount / firstSupply);
+				returnAmount = collateralAmount + (firstReserve * extraFutureAmount / firstSupply);
 
 			} else {
 				returnAmount = _bancorCalculateSaleReturn(supply, collateralReverse - reserveShiftAmount, cw, idoAmount);
@@ -245,16 +246,16 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (returnAmount - feeAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) {
+	function sellFor(address user, uint256 idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) checkStartBlock(){
 
 		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
 		require(collateralAmount >= _collateralAmount, 'price changed');
 
 		collateralReverse = collateralReverse - (collateralAmount + feeAmount);
-		idoAsset.burn(msg.sender, idoAmount);
-		collateralAsset.transfer(msg.sender, collateralAmount);
+		IERC20(idoAddress).burn(msg.sender, idoAmount);
+		IERC20(collateralAddress).transfer(msg.sender, collateralAmount);
 
-		daoFeeAmount = daoFeeAmount + feeAmount;
+		deployerTotalFeeAmount = deployerTotalFeeAmount + feeAmount;
 
 		emit Sell(user, collateralAmount, idoAmount, feeAmount);
 	}
@@ -262,6 +263,15 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	function sell(uint256 idoAmount, uint256 collateralAmount) external {
 		sellFor(msg.sender, idoAmount, collateralAmount);
 	}
+
+	event Buy(address user, uint256 idoAmount, uint256 collateralAmount, uint256 feeAmount);
+	event Sell(address user, uint256 collateralAmount, uint256 idoAmount, uint256 feeAmount);
+	event CollateralTransferred(address to, uint256 amount);
+	event FeeTransferred(address to, uint256 amount);
+	event WhiteListActivated(bool activeWhiteList);  // TODO: change name
+	event WhiteListAddrSet(address user, bool status);  // TODO: change name
+	event BlackListAddrSet(address user, bool status);  // TODO: change name
+
 }
 
 //Dar panah khoda
