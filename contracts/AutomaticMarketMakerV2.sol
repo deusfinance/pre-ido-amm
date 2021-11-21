@@ -21,21 +21,19 @@ interface IPower {
 
 contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	// TODO: change require messages
-	// TODO: refactor code style
-	// TODO: add reverse view functions (Hasan)
 
 	bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 	bytes32 public constant FEE_COLLECTOR_ROLE = keccak256("FEE_COLLECTOR_ROLE");
 
-	address  public idoAddress;  // TODO: change to address
-	address  public collateralAddress;  // TODO: change to address
-	address  public powerAddress;  // TODO: change to address
-	uint256 public collateralReverse;
-	
+	address public idoAddress;
+	address public collateralAddress;
+	address public powerAddress;
+
 	// TODO: check static sale part
 	uint256 public firstSupply;
 	uint256 public firstReserve;
 	uint256 public reserveShiftAmount;
+	uint256 public collateralReverse;
 
 	uint256 public deployerTotalFeeAmount;
 	uint256 public fee = 5 * 10**15; 
@@ -44,14 +42,32 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	uint32 public cwScale = 10**6;
 	uint32 public cw = 0.35 * 10**6;
 
+	uint32 startBlock; // TODO: is data type ok?
+
 	// switch between whitelist and blacklist
-	bool public activeWhiteList = false;  // TODO: change name
+	bool public activeWhiteList = false;
 
-	uint startBlock; // TODO: is data type ok?
-
-	mapping (address => bool) blackListAddr;  // TODO: change name
-	mapping (address => bool) whiteListAddr;  // TODO: change name // show users that are allowed to exchange when WhiteList is active
+	mapping (address => bool) blackListAddr;  // show users that are not allowed to exchange when activeWhiteList is false
+	mapping (address => bool) whiteListAddr;  // show users that are allowed to exchange when activeWhiteList is true
 	
+	
+	/* ========== CONSTRUCTOR ========== */
+
+	constructor(address _collateralAddress, address _idoAddress, address _powerAddress) ReentrancyGuard() {
+		require(_collateralAddress != address(0) && _idoAddress != address(0) && _powerAddress != address(0), "Bad args");
+
+		// TODO: what are new roles? role management.
+		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+		_setupRole(OPERATOR_ROLE, msg.sender);
+		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
+
+		collateralAddress = _collateralAddress;
+		idoAddress = _idoAddress;
+		powerAddress = _powerAddress;
+	}
+
+
+	/* ========== MODIFIERS ========== */
 
 	modifier onlyOperator {
 		require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
@@ -62,8 +78,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		require(hasRole(FEE_COLLECTOR_ROLE, msg.sender), "Caller is not a FeeCollector");
 		_;
 	}
-
-	// TODO: change name	
+	
 	modifier restrictAddr(address user) {
 		if (activeWhiteList) {
 			require(whiteListAddr[user], "Address is restricted");
@@ -79,110 +94,32 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		_;
 	}
 
-	function setStartBlock(uint _startBlock) {
-		startBlock = _startBlock;
-	}
-	
-	function activateWhiteList(bool _activeWhiteList) external onlyOperator {  // TODO: change name
-		activeWhiteList = _activeWhiteList;
-		emit WhiteListActivated(activeWhiteList);
-	}
-	
-	function setWhiteListAddr(address user, bool status) external onlyOperator {  // TODO: change name
-		whiteListAddr[user] = status;
-		emit WhiteListAddrSet(user, status);
-	}
 
-	function setBlackListAddr(address user, bool status) external onlyOperator {  // TODO: change name
-		blackListAddr[user] = status;
-		emit BlackListAddrSet(user, status);
-	}
+	/* ========== PUBLIC FUNCTIONS ========== */
 
-	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
-		IERC20(collateralAddress).transfer(to, amount);
-		emit CollateralTransferred(to, amount);
+	function sellFor(
+		address user, 
+		uint256 idoAmount, 
+		uint256 _collateralAmount
+	) public nonReentrant() restrictAddr(user) checkStartBlock(){
+
+		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
+		require(collateralAmount >= _collateralAmount, 'price changed');
+
+		collateralReverse = collateralReverse - (collateralAmount + feeAmount);
+		IERC20(idoAddress).burn(msg.sender, idoAmount);
+		IERC20(collateralAddress).transfer(msg.sender, collateralAmount);
+
+		deployerTotalFeeAmount = deployerTotalFeeAmount + feeAmount;
+
+		emit Sell(user, collateralAmount, idoAmount, feeAmount);
 	}
 
-	function withdrawFee(uint256 amount, address to) external onlyFeeCollector {
-		require(amount <= deployerTotalFeeAmount, "amount is bigger than deployerTotalFeeAmount");
-		deployerTotalFeeAmount = deployerTotalFeeAmount - amount;
-		IERC20(collateralAddress).transfer(to, amount);
-		emit FeeTransferred(to, amount);
-	}
-
-	function setFee(uint256 _fee) external onlyOperator {
-		fee = _fee;
-	}
-
-	receive() external payable {
-		revert();
-	}
-
-	constructor(address _collateralAddress, address _idoAddress, address _powerAddress) ReentrancyGuard() {
-		require(_collateralAddress != address(0) && _idoAddress != address(0) && _powerAddress != address(0), "Bad args");
-
-		// TODO: what are new roles? role management.
-		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-		_setupRole(OPERATOR_ROLE, msg.sender);
-		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
-
-		collateralAddress = _collateralAddress;
-		idoAddress = _idoAddress;
-		powerAddress = _powerAddress;
-	}
-
-	function init(uint256 _firstReserve, uint256 _firstSupply, uint32 _cw) external onlyOperator {
-		collateralReverse = _firstReserve;
-		firstReserve = _firstReserve;
-		firstSupply = _firstSupply;
-		cw = _cw;
-		reserveShiftAmount = collateralReverse * (cwScale - cw) / cwScale;
-	}
-
-	function _bancorCalculatePurchaseReturn(
-		uint256 _supply,
-		uint256 _connectorBalance,
-		uint32 _connectorWeight,
-		uint256 _depositAmount) internal view returns (uint256){
-		// validate input
-		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= cwScale, "_bancorCalculateSaleReturn() Error");
-
-		// special case for 0 deposit amount
-		if (_depositAmount == 0) {
-			return 0;
-		}
-
-		uint256 result;
-		uint8 precision;
-		uint256 baseN = _depositAmount + _connectorBalance;
-		(result, precision) = IPower(powerAddress).power(baseN, _connectorBalance, _connectorWeight, cwScale);
-		uint256 newTokenSupply = _supply * result >> precision;
-		return newTokenSupply - _supply;
-	}
-
-	function calculatePurchaseReturn(uint256 collateralAmount) public view returns (uint256, uint256) {
-
-		uint256 feeAmount = collateralAmount * fee / feeScale;
-		collateralAmount = collateralAmount - feeAmount;
-		uint256 supply = IERC20(idoAddress).totalSupply();
-		
-		if (supply < firstSupply){
-			if  (collateralReverse + collateralAmount > firstReserve){
-				uint256 exteraDeusAmount = collateralReverse + collateralAmount - firstReserve;
-				uint256 idoAmount = firstSupply - supply;
-
-				idoAmount = idoAmount + _bancorCalculatePurchaseReturn(firstSupply, firstReserve - reserveShiftAmount, cw, exteraDeusAmount);
-				return (idoAmount, feeAmount);
-			}
-			else{
-				return (supply * collateralAmount / collateralReverse, feeAmount);
-			}
-		}else{
-			return (_bancorCalculatePurchaseReturn(supply, collateralReverse - reserveShiftAmount, cw, collateralAmount), feeAmount);
-		}
-	}
-
-	function buyFor(address user, uint256 _idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) checkStartBlock(){
+	function buyFor(
+		address user, 
+		uint256 _idoAmount, 
+		uint256 _collateralAmount
+	) public nonReentrant() restrictAddr(user) checkStartBlock(){
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
 		require(idoAmount >= _idoAmount, 'price changed');
 
@@ -196,15 +133,17 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		emit Buy(user, idoAmount, _collateralAmount, feeAmount);
 	}
 
-	function buy(uint256 idoAmount, uint256 collateralAmount) external {
-		buyFor(msg.sender, idoAmount, collateralAmount);
-	}
+
+	/* ========== VIEWS ========== */
 
 	function _bancorCalculateSaleReturn(
-		uint256 _supply,
-		uint256 _connectorBalance,
-		uint32 _connectorWeight,
-		uint256 _sellAmount) internal view returns (uint256){
+		uint256 _supply, 
+		uint256 _connectorBalance, 
+		uint32 _connectorWeight, 
+		uint256 _sellAmount
+	) internal view returns (
+		uint256
+	){
 
 		// validate input
 		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= cwScale && _sellAmount <= _supply, "_bancorCalculateSaleReturn Error");
@@ -226,7 +165,12 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (oldBalance - newBalance) / result;
 	}
 
-	function calculateSaleReturn(uint256 idoAmount) public view returns (uint256, uint256) {
+	function calculateSaleReturn(
+		uint256 idoAmount
+	) public view returns (
+		uint256, 
+		uint256
+	){
 		uint256 supply = IERC20(idoAddress).totalSupply();
 		uint256 returnAmount;
 
@@ -246,31 +190,216 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		return (returnAmount - feeAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 idoAmount, uint256 _collateralAmount) public nonReentrant() restrictAddr(user) checkStartBlock(){
+	function calculateSaleAmountIn(
+		uint256 goal, 
+		uint256 eps
+	) public view returns (
+		uint256
+	){
+	    uint256 upper = 1;
+	    if (goal >= eps)
+	        upper = eps >> 1;
+	    uint256 amount = 0;
+	    while (amount <= goal) {
+	        upper <<= 1;
+	        amount = calculateSaleReturn(upper);
+	    }
+	    uint256 lower = upper >> 1;
+	    uint256 mid;
+	    while (true) {
+	        mid = (lower + upper) >> 1;
+	        amount = calculateSaleReturn(mid);
+	        if (amount <= goal) {
+	            if (goal - amount <= eps)
+	                return mid;
+	            lower = mid;
+	        }
+	        else {
+	            if (amount - goal <= eps)
+	                return mid;
+	            upper = mid;
+	        }
+	   }
+    }
 
-		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
-		require(collateralAmount >= _collateralAmount, 'price changed');
+	function _bancorCalculatePurchaseReturn(
+		uint256 _supply,
+		uint256 _connectorBalance,
+		uint32 _connectorWeight,
+		uint256 _depositAmount
+	) internal view returns (
+		uint256
+	){
+		// validate input
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= cwScale, "_bancorCalculateSaleReturn() Error");
 
-		collateralReverse = collateralReverse - (collateralAmount + feeAmount);
-		IERC20(idoAddress).burn(msg.sender, idoAmount);
-		IERC20(collateralAddress).transfer(msg.sender, collateralAmount);
+		// special case for 0 deposit amount
+		if (_depositAmount == 0) {
+			return 0;
+		}
 
-		deployerTotalFeeAmount = deployerTotalFeeAmount + feeAmount;
+		uint256 result;
+		uint8 precision;
+		uint256 baseN = _depositAmount + _connectorBalance;
+		(result, precision) = IPower(powerAddress).power(baseN, _connectorBalance, _connectorWeight, cwScale);
+		uint256 newTokenSupply = _supply * result >> precision;
+		return newTokenSupply - _supply;
+	}
 
-		emit Sell(user, collateralAmount, idoAmount, feeAmount);
+	function calculatePurchaseReturn(
+		uint256 collateralAmount
+	) public view returns (
+		uint256, uint256
+	){
+		uint256 feeAmount = collateralAmount * fee / feeScale;
+		collateralAmount = collateralAmount - feeAmount;
+		uint256 supply = IERC20(idoAddress).totalSupply();
+		
+		if (supply < firstSupply){
+			if  (collateralReverse + collateralAmount > firstReserve){
+				uint256 exteraDeusAmount = collateralReverse + collateralAmount - firstReserve;
+				uint256 idoAmount = firstSupply - supply;
+
+				idoAmount = idoAmount + _bancorCalculatePurchaseReturn(firstSupply, firstReserve - reserveShiftAmount, cw, exteraDeusAmount);
+				return (idoAmount, feeAmount);
+			}
+			else{
+				return (supply * collateralAmount / collateralReverse, feeAmount);
+			}
+		}else{
+			return (_bancorCalculatePurchaseReturn(supply, collateralReverse - reserveShiftAmount, cw, collateralAmount), feeAmount);
+		}
+	}
+
+	function calculatePurchaseAmountIn(
+		uint256 goal, 
+		uint256 eps
+	) public view returns (
+		uint256
+	){
+	    uint256 upper = 1;
+	    if (goal >= eps)
+	        upper = eps >> 1;
+	    uint256 amount = 0;
+	    while (amount <= goal) {
+	        upper <<= 1;
+	        amount = calculatePurchaseReturn(upper);
+	    }
+	    uint256 lower = upper >> 1;
+	    uint256 mid;
+	    while (true) {
+	        mid = (lower + upper) >> 1;
+	        amount = calculatePurchaseReturn(mid);
+	        if (amount <= goal) {
+	            if (goal - amount <= eps)
+	                return mid;
+	            lower = mid;
+	        }
+	        else {
+	            if (amount - goal <= eps)
+	                return mid;
+	            upper = mid;
+	        }
+	   }
+    }
+
+
+	/* ========== RESTRICTED FUNCTIONS ========== */
+
+	function init(uint256 _firstReserve, uint256 _firstSupply, uint32 _cw) external onlyOperator {
+		collateralReverse = _firstReserve;
+		firstReserve = _firstReserve;
+		firstSupply = _firstSupply;
+		cw = _cw;
+		reserveShiftAmount = collateralReverse * (cwScale - cw) / cwScale;
+	}
+
+	function buy(uint256 idoAmount, uint256 collateralAmount) external {
+		buyFor(msg.sender, idoAmount, collateralAmount);
 	}
 
 	function sell(uint256 idoAmount, uint256 collateralAmount) external {
 		sellFor(msg.sender, idoAmount, collateralAmount);
 	}
 
-	event Buy(address user, uint256 idoAmount, uint256 collateralAmount, uint256 feeAmount);
-	event Sell(address user, uint256 collateralAmount, uint256 idoAmount, uint256 feeAmount);
-	event CollateralTransferred(address to, uint256 amount);
-	event FeeTransferred(address to, uint256 amount);
-	event WhiteListActivated(bool activeWhiteList);  // TODO: change name
-	event WhiteListAddrSet(address user, bool status);  // TODO: change name
-	event BlackListAddrSet(address user, bool status);  // TODO: change name
+	function activateWhiteList(bool _activeWhiteList) external onlyOperator {
+		activeWhiteList = _activeWhiteList;
+		emit WhiteListActivated(activeWhiteList);
+	}
+	
+	function setWhiteListAddr(address user, bool status) external onlyOperator {
+		whiteListAddr[user] = status;
+		emit WhiteListAddrSet(user, status);
+	}
+
+	function setBlackListAddr(address user, bool status) external onlyOperator {
+		blackListAddr[user] = status;
+		emit BlackListAddrSet(user, status);
+	}
+
+	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
+		IERC20(collateralAddress).transfer(to, amount);
+		emit CollateralTransferred(to, amount);
+	}
+
+	function withdrawFee(uint256 amount, address to) external onlyFeeCollector {
+		require(amount <= deployerTotalFeeAmount, "amount is bigger than deployerTotalFeeAmount");
+		deployerTotalFeeAmount = deployerTotalFeeAmount - amount;
+		IERC20(collateralAddress).transfer(to, amount);
+		emit FeeTransferred(to, amount);
+	}
+
+	function setFee(uint256 _fee) external onlyOperator {
+		fee = _fee;
+	}
+
+	function setStartBlock(uint32 _startBlock) external onlyOperator {
+		startBlock = _startBlock;
+	}
+
+	receive() external payable {
+		revert();
+	}
+
+
+	/* ========== EVENTS ========== */
+	event Buy(
+		address user, 
+		uint256 idoAmount, 
+		uint256 collateralAmount, 
+		uint256 feeAmount
+	);
+	
+	event Sell(
+		address user, 
+		uint256 collateralAmount, 
+		uint256 idoAmount, 
+		uint256 feeAmount
+	);
+
+	event CollateralTransferred(
+		address to, 
+		uint256 amount
+	);
+	
+	event FeeTransferred(
+		address to, 
+		uint256 amount
+	);
+
+	event WhiteListActivated(
+		bool activeWhiteList
+	);
+	
+	event WhiteListAddrSet(
+		address user, 
+		bool status
+	);
+	
+	event BlackListAddrSet(
+		address user, 
+		bool status
+	);
 
 }
 
