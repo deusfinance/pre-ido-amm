@@ -1,40 +1,28 @@
 //Be name khoda
 //SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.10;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-interface IERC20 {
-	function totalSupply() external view returns (uint256);
-	function mint(address to, uint256 amount) external;
-	function burn(address from, uint256 amount) external;
-	function transfer(address recipient, uint256 amount) external returns (bool);
-	function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-}
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 interface IPower {
 	function power(uint256 _baseN, uint256 _baseD, uint32 _expN, uint32 _expD) external view returns (uint256, uint8);
 }
 
-contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
-	// TODO: change require messages
+contract PreIDOToken is ReentrancyGuard , ERC20 {
 
-	bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
-	bytes32 public constant FEE_COLLECTOR_ROLE = keccak256("FEE_COLLECTOR_ROLE");
-
-	address public idoAddress;
+	address public factory;
 	address public collateralAddress;
-	address public powerAddress;
+	address public powerLibrary;
 
 	// TODO: check static sale part
 	uint256 public firstSupply;
 	uint256 public firstReserve;
 	uint256 public reserveShiftAmount;
 	uint256 public collateralReverse;
-
+	uint256 public ammID;
 	uint256 public deployerTotalFeeAmount;
 	uint256 public fee = 5 * 10**15; 
 	uint256 public feeScale = 10**18;
@@ -53,61 +41,51 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	
 	/* ========== CONSTRUCTOR ========== */
 
-	constructor(address _collateralAddress, address _idoAddress, address _powerAddress) ReentrancyGuard() {
-		require(_collateralAddress != address(0) && _idoAddress != address(0) && _powerAddress != address(0), "Bad args");
+	constructor(address _factory, uint256 _ammID, address _collateralAddress, address _powerLibrary , string _name , string _symbol ) ReentrancyGuard() ERC20(_name , _symbol) {
+		require(_collateralAddress != address(0) && _powerLibrary != address(0) && _factory != address(0), "PreIDOAMM: Zero address detected");
 
-		// TODO: what are new roles? role management.
-		_setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-		_setupRole(OPERATOR_ROLE, msg.sender);
-		_setupRole(FEE_COLLECTOR_ROLE, msg.sender);
-
+		factory = _factory;
+		ammID = _ammID;
 		collateralAddress = _collateralAddress;
-		idoAddress = _idoAddress;
-		powerAddress = _powerAddress;
+		powerLibrary = _powerLibrary;
 	}
 
 
 	/* ========== MODIFIERS ========== */
 
-	modifier onlyOperator {
-		require(hasRole(OPERATOR_ROLE, msg.sender), "Caller is not an operator");
-		_;
-	}
-	
-	modifier onlyFeeCollector {
-		require(hasRole(FEE_COLLECTOR_ROLE, msg.sender), "Caller is not a FeeCollector");
-		_;
-	}
 	
 	modifier restrictAddr(address user) {
 		if (activeWhiteList) {
-			require(whiteListAddr[user], "Address is restricted");
+			require(whiteListAddr[user], "PreIDOAMM: Address is restricted");
 		} else {
-			require(!blackListAddr[user], "Address is restricted");
+			require(!blackListAddr[user], "PreIDOAMM: Address is restricted");
 		}
 		_;
 	}
 
 	// TODO: where should we use this modifier?
-	modifier checkStartBlock {
-		require(block.number >= startBlock, "Current block number is less than start block number");
+	modifier isActive {
+		require(block.number >= startBlock, "PreIDOAMM: Current block number is less than start block number");
 		_;
 	}
 
-
+	modifier onlyOwner {
+		require(IERC721(factory).ownerOf(ammID) == msg.sender, "PreIDOAMM: You are not owner");
+		_;
+	}
 	/* ========== PUBLIC FUNCTIONS ========== */
 
 	function sellFor(
 		address user, 
 		uint256 idoAmount, 
 		uint256 _collateralAmount
-	) public nonReentrant() restrictAddr(user) checkStartBlock(){
+	) public nonReentrant() restrictAddr(user) isActive {
 
 		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
 		require(collateralAmount >= _collateralAmount, 'price changed');
 
 		collateralReverse = collateralReverse - (collateralAmount + feeAmount);
-		IERC20(idoAddress).burn(msg.sender, idoAmount);
+		_burn(msg.sender, idoAmount);
 		IERC20(collateralAddress).transfer(msg.sender, collateralAmount);
 
 		deployerTotalFeeAmount = deployerTotalFeeAmount + feeAmount;
@@ -119,18 +97,26 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		address user, 
 		uint256 _idoAmount, 
 		uint256 _collateralAmount
-	) public nonReentrant() restrictAddr(user) checkStartBlock(){
+	) public nonReentrant() restrictAddr(user) isActive {
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(_collateralAmount);
 		require(idoAmount >= _idoAmount, 'price changed');
 
 		collateralReverse = collateralReverse + _collateralAmount - feeAmount;
 
 		IERC20(collateralAddress).transferFrom(msg.sender, address(this), _collateralAmount);
-		IERC20(idoAddress).mint(user, idoAmount);
+		_mint(user, idoAmount);
 
 		deployerTotalFeeAmount = deployerTotalFeeAmount + feeAmount;
 
 		emit Buy(user, idoAmount, _collateralAmount, feeAmount);
+	}
+
+	function buy(uint256 idoAmount, uint256 collateralAmount) external {
+		buyFor(msg.sender, idoAmount, collateralAmount);
+	}
+
+	function sell(uint256 idoAmount, uint256 collateralAmount) external {
+		sellFor(msg.sender, idoAmount, collateralAmount);
 	}
 
 
@@ -159,7 +145,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 result;
 		uint8 precision;
 		uint256 baseD = _supply - _sellAmount;
-		(result, precision) = IPower(powerAddress).power(_supply, baseD, cwScale, _connectorWeight);
+		(result, precision) = IPower(powerLibrary).power(_supply, baseD, cwScale, _connectorWeight);
 		uint256 oldBalance = _connectorBalance * result;
 		uint256 newBalance = _connectorBalance << precision;
 		return (oldBalance - newBalance) / result;
@@ -171,7 +157,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256, 
 		uint256
 	){
-		uint256 supply = IERC20(idoAddress).totalSupply();
+		uint256 supply = totalSupply();
 		uint256 returnAmount;
 
 		if (supply > firstSupply) {
@@ -241,7 +227,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		uint256 result;
 		uint8 precision;
 		uint256 baseN = _depositAmount + _connectorBalance;
-		(result, precision) = IPower(powerAddress).power(baseN, _connectorBalance, _connectorWeight, cwScale);
+		(result, precision) = IPower(powerLibrary).power(baseN, _connectorBalance, _connectorWeight, cwScale);
 		uint256 newTokenSupply = _supply * result >> precision;
 		return newTokenSupply - _supply;
 	}
@@ -253,7 +239,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 	){
 		uint256 feeAmount = collateralAmount * fee / feeScale;
 		collateralAmount = collateralAmount - feeAmount;
-		uint256 supply = IERC20(idoAddress).totalSupply();
+		uint256 supply = totalSupply();
 		
 		if (supply < firstSupply){
 			if  (collateralReverse + collateralAmount > firstReserve){
@@ -306,7 +292,7 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 	/* ========== RESTRICTED FUNCTIONS ========== */
 
-	function init(uint256 _firstReserve, uint256 _firstSupply, uint32 _cw) external onlyOperator {
+	function init(uint256 _firstReserve, uint256 _firstSupply, uint32 _cw) external onlyOwner {
 		collateralReverse = _firstReserve;
 		firstReserve = _firstReserve;
 		firstSupply = _firstSupply;
@@ -314,46 +300,38 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 		reserveShiftAmount = collateralReverse * (cwScale - cw) / cwScale;
 	}
 
-	function buy(uint256 idoAmount, uint256 collateralAmount) external {
-		buyFor(msg.sender, idoAmount, collateralAmount);
-	}
-
-	function sell(uint256 idoAmount, uint256 collateralAmount) external {
-		sellFor(msg.sender, idoAmount, collateralAmount);
-	}
-
-	function activateWhiteList(bool _activeWhiteList) external onlyOperator {
+	function activateWhiteList(bool _activeWhiteList) external onlyOwner {
 		activeWhiteList = _activeWhiteList;
 		emit WhiteListActivated(activeWhiteList);
 	}
 	
-	function setWhiteListAddr(address user, bool status) external onlyOperator {
+	function setWhiteListAddr(address user, bool status) external onlyOwner {
 		whiteListAddr[user] = status;
 		emit WhiteListAddrSet(user, status);
 	}
 
-	function setBlackListAddr(address user, bool status) external onlyOperator {
+	function setBlackListAddr(address user, bool status) external onlyOwner {
 		blackListAddr[user] = status;
 		emit BlackListAddrSet(user, status);
 	}
 
-	function withdrawCollateral(uint256 amount, address to) external onlyOperator {
+	function withdrawCollateral(uint256 amount, address to) external onlyOwner {
 		IERC20(collateralAddress).transfer(to, amount);
 		emit CollateralTransferred(to, amount);
 	}
 
-	function withdrawFee(uint256 amount, address to) external onlyFeeCollector {
+	function withdrawFee(uint256 amount, address to) external onlyOwner {
 		require(amount <= deployerTotalFeeAmount, "amount is bigger than deployerTotalFeeAmount");
 		deployerTotalFeeAmount = deployerTotalFeeAmount - amount;
 		IERC20(collateralAddress).transfer(to, amount);
 		emit FeeTransferred(to, amount);
 	}
 
-	function setFee(uint256 _fee) external onlyOperator {
+	function setFee(uint256 _fee) external onlyOwner {
 		fee = _fee;
 	}
 
-	function setStartBlock(uint32 _startBlock) external onlyOperator {
+	function setStartBlock(uint32 _startBlock) external onlyOwner {
 		startBlock = _startBlock;
 	}
 
@@ -363,44 +341,14 @@ contract AutomaticMarketMakerV2 is AccessControl, ReentrancyGuard {
 
 
 	/* ========== EVENTS ========== */
-	event Buy(
-		address user, 
-		uint256 idoAmount, 
-		uint256 collateralAmount, 
-		uint256 feeAmount
-	);
-	
-	event Sell(
-		address user, 
-		uint256 collateralAmount, 
-		uint256 idoAmount, 
-		uint256 feeAmount
-	);
 
-	event CollateralTransferred(
-		address to, 
-		uint256 amount
-	);
-	
-	event FeeTransferred(
-		address to, 
-		uint256 amount
-	);
-
-	event WhiteListActivated(
-		bool activeWhiteList
-	);
-	
-	event WhiteListAddrSet(
-		address user, 
-		bool status
-	);
-	
-	event BlackListAddrSet(
-		address user, 
-		bool status
-	);
-
+	event Buy(address user, uint256 idoAmount, uint256 collateralAmount, uint256 feeAmount);
+	event Sell(address user, uint256 collateralAmount, uint256 idoAmount, uint256 feeAmount);
+	event CollateralTransferred(address to, uint256 amount);
+	event FeeTransferred(address to, uint256 amount);
+	event WhiteListActivated(bool activeWhiteList);	
+	event WhiteListAddrSet(address user, bool status);
+	event BlackListAddrSet(address user, bool status);
 }
 
 //Dar panah khoda
