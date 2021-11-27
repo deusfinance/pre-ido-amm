@@ -1,1 +1,1 @@
-# Automatic-market-maker-AMM-V2
+# Pre IDO AMM

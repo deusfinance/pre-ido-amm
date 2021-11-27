@@ -3,25 +3,27 @@
 
 pragma solidity ^0.8.10;
 
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/safeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "./IUniswapV2Router02.sol";
 
 interface IPower {
 	function power(uint256 _baseN, uint256 _baseD, uint32 _expN, uint32 _expD) external view returns (uint256, uint8);
 }
 
-contract PreIDOToken is ReentrancyGuard, ERC20 {
+contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
+	using SafeERC20 for IERC20;
+
+	/* ========== STATE VARIABLES ========== */
 
 	address public uniswapV2RouterV02 = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
 	address public factory;
 	address public collateralAddress;
 	address public powerLibrary;
 	uint256 private constant deadline = 0xf000000000000000000000000000000000000000000000000000000000000000;
-	uint256 public firstSupply;
-	uint256 public firstReserve;
-	uint256 public reserveShiftAmount;
 	uint256 public collateralReverse;
 	uint256 public ammID;
 	uint256 public totalFee;
@@ -32,7 +34,7 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 	uint32 public cw;
 	uint32 public scale = 10**6;
 	uint256 startBlock;
-	
+
 	bool public activeWhiteList = false;  // switch between whitelist and blacklist
 	mapping (address => bool) blackListAddr;  // show users that are not allowed to exchange when activeWhiteList is false
 	mapping (address => bool) whiteListAddr;  // show users that are allowed to exchange when activeWhiteList is true
@@ -48,8 +50,8 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		address _powerLibrary,
 		uint256 _startBlock,
 		uint32 _cw,
-		string _name,
-		string _symbol
+		string memory _name,
+		string memory _symbol
 	) ReentrancyGuard() ERC20(_name, _symbol) {
 		require(_collateralAddress != address(0) && _powerLibrary != address(0) && _factory != address(0), "PreIDOToken: Zero address detected");
 		require(_fee <= scale, "PreIDOToken: invalid _fee");
@@ -61,6 +63,8 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		powerLibrary = _powerLibrary;
 		startBlock = _startBlock;
 		cw = _cw;
+
+		IERC20(collateralAddress).safeApprove(uniswapV2RouterV02, type(uint256).max);
 	}
 
 
@@ -81,10 +85,10 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		_;
 	}
 
-	modifier onlyOwner {
-		require(IERC721(factory).ownerOf(ammID) == msg.sender, "PreIDOToken: You are not owner");
-		_;
-	}
+	// modifier onlyOwner {
+	// 	require(IERC721(factory).ownerOf(ammID) == msg.sender, "PreIDOToken: You are not owner");
+	// 	_;
+	// }
 
 	modifier isClaimable {
 		require(claimStartBlock <= block.number && block.number <= claimEndBlock, "PreIDOToken: Claim is closed");
@@ -93,35 +97,27 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 
 	/* ========== PUBLIC FUNCTIONS ========== */
 
-	function sellFor(
-		address user, 
-		uint256 idoAmount, 
-		uint256 minCollateralAmount
-	) public nonReentrant() restrictAddr(user) isActive {
+	function sellFor(address user, uint256 idoAmount, uint256 minCollateralAmount) external nonReentrant() restrictAddr(user) isActive {
 
 		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
-		require(collateralAmount >= minCollateralAmount, 'price changed');
+		require(collateralAmount >= minCollateralAmount, "PreIDOToken: price changed");
 
 		collateralReverse = collateralReverse - (collateralAmount + feeAmount);
 		_burn(msg.sender, idoAmount);
-		IERC20(collateralAddress).transfer(msg.sender, collateralAmount);
+		IERC20(collateralAddress).safeTransfer(msg.sender, collateralAmount);
 
 		totalFee = totalFee + feeAmount;
 
 		emit Sell(user, collateralAmount, idoAmount, feeAmount);
 	}
 
-	function buyFor(
-		address user, 
-		uint256 minIdoAmount, 
-		uint256 collateralAmount
-	) public nonReentrant() restrictAddr(user) isActive {
+	function buyFor(address user, uint256 minIdoAmount, uint256 collateralAmount) external nonReentrant() restrictAddr(user) isActive {
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(collateralAmount);
 		require(idoAmount >= minIdoAmount, "PreIDOToken: price changed");
 
 		collateralReverse = collateralReverse + collateralAmount - feeAmount;
 
-		IERC20(collateralAddress).transferFrom(msg.sender, address(this), collateralAmount);
+		IERC20(collateralAddress).safeTransferFrom(msg.sender, address(this), collateralAmount);
 		_mint(user, idoAmount);
 
 		totalFee = totalFee + feeAmount;
@@ -129,8 +125,11 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		emit Buy(user, idoAmount, collateralAmount, feeAmount);
 	}
 
-	function buyFor(address user, uint256 amountOutMin, uint256 amountIn, address[] memory path) external {
-		require(path[path.length - 1] == address(this), "PreIDOToken: collateral not found");
+	function buyFor(address user, uint256 amountOutMin, uint256 amountIn, address[] memory path) external nonReentrant() restrictAddr(user) isActive {
+		require(path[path.length - 1] == collateralAddress, "PreIDOToken: collateral not found");
+		address tokenIn = path[0];
+		IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+		IERC20(tokenIn).safeApprove(uniswapV2RouterV02, amountIn);
 		uint collateralAmount = IUniswapV2Router02(uniswapV2RouterV02).swapExactTokensForTokens(amountIn, 1, path, address(this), deadline)[path.length - 1];
 		(uint256 idoAmount, uint256 feeAmount) = calculatePurchaseReturn(collateralAmount);
 		require(idoAmount >= amountOutMin, "PreIDOToken: price changed");
@@ -143,7 +142,7 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		emit Buy(user, idoAmount, collateralAmount, feeAmount);
 	}
 
-	function sellFor(address user, uint256 idoAmount, uint256 amountOutMin, address[] memory path) external {
+	function sellFor(address user, uint256 idoAmount, uint256 amountOutMin, address[] memory path) external nonReentrant() restrictAddr(user) isActive {
 		(uint256 collateralAmount, uint256 feeAmount) = calculateSaleReturn(idoAmount);
 
 		collateralReverse = collateralReverse - (collateralAmount + feeAmount);
@@ -160,8 +159,8 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 
 	function claimFor(address user, uint256 amount, address toCoin) public isClaimable {
 		_burn(msg.sender, amount);
-		IERC20(toCoin).transfer(user, amount * claimRatio / scale);
-		Claim(user, amount * claimRatio / scale);
+		IERC20(toCoin).safeTransfer(user, amount * claimRatio / scale);
+		emit Claim(user, amount * claimRatio / scale);
 	}
 
 	/* ========== VIEWS ========== */
@@ -173,7 +172,7 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		uint256 _sellAmount
 	) internal view returns (uint256){
 		// validate input
-		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale && _sellAmount <= _supply, "_bancorCalculateSaleReturn Error");
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale && _sellAmount <= _supply, "PreIDOToken: _bancorCalculateSaleReturn Error");
 		// special case for 0 sell amount
 		if (_sellAmount == 0) {
 			return 0;
@@ -196,18 +195,8 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		uint256 supply = totalSupply();
 		uint256 returnAmount;
 
-		if (supply > firstSupply) {
-			if (firstSupply > supply - idoAmount) {
-				uint256 extraFutureAmount = firstSupply - (supply - idoAmount);
-				uint256 collateralAmount = collateralReverse - firstReserve;
-				returnAmount = collateralAmount + (firstReserve * extraFutureAmount / firstSupply);
+		returnAmount = _bancorCalculateSaleReturn(supply, collateralReverse, cw, idoAmount);
 
-			} else {
-				returnAmount = _bancorCalculateSaleReturn(supply, collateralReverse - reserveShiftAmount, cw, idoAmount);
-			}
-		} else {
-			returnAmount = collateralReverse * idoAmount / supply;
-		}
 		uint256 feeAmount = returnAmount * fee / scale;
 		return (returnAmount - feeAmount, feeAmount);
 	}
@@ -225,13 +214,13 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 	    uint256 amount = 0;
 	    while (amount <= goal) {
 	        upper <<= 1;
-	        amount = calculateSaleReturn(upper);
+	        (amount, ) = calculateSaleReturn(upper);
 	    }
 	    uint256 lower = upper >> 1;
 	    uint256 mid;
 	    while (true) {
 	        mid = (lower + upper) >> 1;
-	        amount = calculateSaleReturn(mid);
+	        (amount, ) = calculateSaleReturn(mid);
 	        if (amount <= goal) {
 	            if (goal - amount <= eps)
 	                return mid;
@@ -252,7 +241,7 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		uint256 _depositAmount
 	) internal view returns (uint256){
 		// validate input
-		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale, "_bancorCalculateSaleReturn() Error");
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale, "PreIDOToken: _bancorCalculateSaleReturn() Error");
 
 		// special case for 0 deposit amount
 		if (_depositAmount == 0) {
@@ -271,21 +260,8 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 		uint256 feeAmount = collateralAmount * fee / scale;
 		collateralAmount = collateralAmount - feeAmount;
 		uint256 supply = totalSupply();
-		
-		if (supply < firstSupply){
-			if  (collateralReverse + collateralAmount > firstReserve){
-				uint256 exteraDeusAmount = collateralReverse + collateralAmount - firstReserve;
-				uint256 idoAmount = firstSupply - supply;
 
-				idoAmount = idoAmount + _bancorCalculatePurchaseReturn(firstSupply, firstReserve - reserveShiftAmount, cw, exteraDeusAmount);
-				return (idoAmount, feeAmount);
-			}
-			else{
-				return (supply * collateralAmount / collateralReverse, feeAmount);
-			}
-		} else {
-			return (_bancorCalculatePurchaseReturn(supply, collateralReverse - reserveShiftAmount, cw, collateralAmount), feeAmount);
-		}
+		return (_bancorCalculatePurchaseReturn(supply, collateralReverse, cw, collateralAmount), feeAmount);
 	}
 
 	function calculatePurchaseReturn(uint256 amountIn, address[] memory path) public view returns (uint256, uint256) {
@@ -300,13 +276,13 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 	    uint256 amount = 0;
 	    while (amount <= goal) {
 	        upper <<= 1;
-	        amount = calculatePurchaseReturn(upper);
+	        (amount, ) = calculatePurchaseReturn(upper);
 	    }
 	    uint256 lower = upper >> 1;
 	    uint256 mid;
 	    while (true) {
 	        mid = (lower + upper) >> 1;
-	        amount = calculatePurchaseReturn(mid);
+	        (amount, ) = calculatePurchaseReturn(mid);
 	        if (amount <= goal) {
 	            if (goal - amount <= eps)
 	                return mid;
@@ -323,12 +299,9 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 
 	/* ========== RESTRICTED FUNCTIONS ========== */
 
-	function setState(uint256 _firstReserve, uint256 _firstSupply, uint32 _cw) external onlyOwner {
-		collateralReverse = _firstReserve;
-		firstReserve = _firstReserve;
-		firstSupply = _firstSupply;
+	function setState(uint256 _collateralReverse, uint32 _cw) external onlyOwner {
+		collateralReverse = _collateralReverse;
 		cw = _cw;
-		reserveShiftAmount = collateralReverse * (scale - cw) / scale;
 	}
 
 	function activateWhiteList(bool _activeWhiteList) external onlyOwner {
@@ -358,14 +331,14 @@ contract PreIDOToken is ReentrancyGuard, ERC20 {
 	}
 
 	function withdrawCollateral(uint256 amount, address to) external onlyOwner {
-		IERC20(collateralAddress).transfer(to, amount);
+		IERC20(collateralAddress).safeTransfer(to, amount);
 		emit WithdrawCollateral(to, amount);
 	}
 
 	function withdrawFee(uint256 amount, address to) external onlyOwner {
-		require(amount <= totalFee, "PreIDOToken: amount should be lower than totalFee");
+		require(amount <= totalFee, "PreIDOToken: invalid amount");
 		totalFee = totalFee - amount;
-		IERC20(collateralAddress).transfer(to, amount);
+		IERC20(collateralAddress).safeTransfer(to, amount);
 		emit WithdrawFee(to, amount);
 	}
 
