@@ -3,7 +3,7 @@
 
 pragma solidity ^0.8.10;
 
-import "@openzeppelin/contracts/token/ERC20/utils/safeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -63,6 +63,8 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
 		powerLibrary = _powerLibrary;
 		startBlock = _startBlock;
 		cw = _cw;
+		
+		_mint(0x0000000000000000000000000000000000000001, 100e18);  // TEMP
 
 		IERC20(collateralAddress).safeApprove(uniswapV2RouterV02, type(uint256).max);
 	}
