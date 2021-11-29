@@ -13,8 +13,8 @@ class Bancor:
     def __init__(self):
         self.dots = []
 
-        self.supply = Decimal(1000)
-        self.reserve = Decimal(100)
+        self.supply = Decimal(0)
+        self.reserve = Decimal(0)
 
         self.shiftSupply = Decimal(100)
         self.shiftReverse = Decimal(1)
@@ -28,13 +28,14 @@ class Bancor:
         self.total_collateral = Decimal(self.reserve)
         self.total_fee = Decimal(0)
 
-    def price(self):
-        return self.reserve / (self.supply * self.cw)
-
     def get_real_reserve_and_supply(self):
         reserve = self.reserve + self.shiftReverse
         supply = self.supply + self.shiftSupply
         return reserve, supply
+
+    def price(self):
+        reserve, supply = self.get_real_reserve_and_supply()
+        return reserve / (supply * self.cw)
 
     def calculatePurchaseReverse(self, idoAmount):
         reserve, supply = self.get_real_reserve_and_supply()
@@ -234,13 +235,6 @@ def test():
         bancor.print_stats()
 
 
-# test()
-# t = RandomTest(Bancor())
-# t.run()
-
-b = Bancor()
-r, f = b.calculatePurchaseReturn(1000)
-print(r, f, b.calculatePurchaseReverse(r))
-
-r, f = b.calculateSaleReturn(1000)
-print(r, f, b.calculateSaleReverse(r))
+test()
+t = RandomTest(Bancor())
+t.run()
