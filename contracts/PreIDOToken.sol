@@ -224,32 +224,41 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
 		return (amountOut, feeAmount);
 	}
 
-	function calculateSaleAmountIn(uint256 goal, uint256 eps) public view returns (uint256){
-	    uint256 upper = 1;
-	    if (goal >= eps)
-	        upper = eps >> 1;
-	    uint256 amount = 0;
-	    while (amount <= goal) {
-	        upper <<= 1;
-	        (amount, ) = calculateSaleReturn(upper);
-	    }
-	    uint256 lower = upper >> 1;
-	    uint256 mid;
-	    while (true) {
-	        mid = (lower + upper) >> 1;
-	        (amount, ) = calculateSaleReturn(mid);
-	        if (amount <= goal) {
-	            if (goal - amount <= eps)
-	                return mid;
-	            lower = mid;
-	        }
-	        else {
-	            if (amount - goal <= eps)
-	                return mid;
-	            upper = mid;
-	        }
-	   }
-    }
+
+function _bancorCalculateSaleAmountIn(
+		uint256 _supply, 
+		uint256 _connectorBalance, 
+		uint32 _connectorWeight, 
+		uint256 _collateralAmount
+	) internal view returns (uint256){
+		// validate input
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale && _collateralAmount <= _supply, "PreIDOToken: _bancorCalculateSaleAmountIn Error");
+		// special case for 0 sell amount
+		if (_collateralAmount == 0) {
+			return 0;
+		}
+		// special case for selling the entire supply
+		if (_collateralAmount == _connectorBalance) {
+			return _supply;
+		}
+		uint256 result;
+		uint8 precision;
+		uint256 baseN = _connectorBalance - _collateralAmount;
+		(result, precision) = IPower(powerLibrary).power(baseN , _connectorBalance , _connectorWeight, scale);
+		uint256 newTokenAmount = _supply * result >> precision ;
+		return _supply - newTokenAmount ;
+	}
+
+	function calculateSaleAmountIn(uint256 collateralAmount) public view returns (uint256, uint256){
+		uint256 newCollateralAmount = collateralAmount * (scale / (scale - fee));
+		uint256 feeAmount = newCollateralAmount - collateralAmount;
+		uint256 supply = totalSupply();
+
+		uint256 returnAmount =  _bancorCalculateSaleAmountIn(supply, collateralReverse, cw, newCollateralAmount);
+
+		return (returnAmount , feeAmount);
+	}
+
 
 	function _bancorCalculatePurchaseReturn(
 		uint256 _supply,
@@ -286,33 +295,36 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
 		return calculatePurchaseReturn(collateralAmount);	
 	}
 
-	function calculatePurchaseAmountIn(uint256 goal, uint256 eps) public view returns (uint256) {
-	    uint256 upper = 1;
-	    if (goal >= eps)
-	        upper = eps >> 1;
-	    uint256 amount = 0;
-	    while (amount <= goal) {
-	        upper <<= 1;
-	        (amount, ) = calculatePurchaseReturn(upper);
-	    }
-	    uint256 lower = upper >> 1;
-	    uint256 mid;
-	    while (true) {
-	        mid = (lower + upper) >> 1;
-	        (amount, ) = calculatePurchaseReturn(mid);
-	        if (amount <= goal) {
-	            if (goal - amount <= eps)
-	                return mid;
-	            lower = mid;
-	        }
-	        else {
-	            if (amount - goal <= eps)
-	                return mid;
-	            upper = mid;
-	        }
-	   }
-    }
+	function _bancorCalculatePurchaseAmountIn(
+		uint256 _supply,
+		uint256 _connectorBalance,
+		uint32 _connectorWeight,
+		uint256 _idoAmount
+	) internal view returns (uint256){
+		// validate input
+		require(_supply > 0 && _connectorBalance > 0 && _connectorWeight > 0 && _connectorWeight <= scale, "PreIDOToken: _bancorCalculatePurchaseAmountIn() Error");
 
+		// special case for 0 deposit amount
+		if (_idoAmount == 0) {
+			return 0;
+		}
+
+		uint256 result;
+		uint8 precision;
+		uint256 baseN = _idoAmount + _supply;
+		(result, precision) = IPower(powerLibrary).power(baseN, _supply, scale, _connectorWeight);
+		uint256 newReserveAmount = _connectorBalance * result >> precision;
+		return newReserveAmount - _connectorBalance ;
+	}
+
+	function calculatePurchaseAmountIn(uint256 idoAmount) public view returns (uint256, uint256) {
+		uint256 supply = totalSupply();
+		uint256 buyAmount = _bancorCalculatePurchaseReturn(supply, collateralReverse, cw, collateralAmount);
+		uint256 returnAmount = buyAmount * (scale / (scale - fee));
+
+		return (returnAmount , returnAmount - buyAmount);
+	
+	}
 
 	/* ========== RESTRICTED FUNCTIONS ========== */
 
