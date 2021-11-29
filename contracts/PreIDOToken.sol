@@ -1,5 +1,20 @@
-//Be name khoda
-//SPDX-License-Identifier: MIT
+// Be name khoda
+// SPDX-License-Identifier: MIT
+// =================================================================================================================
+//  _|_|_|    _|_|_|_|  _|    _|    _|_|_|      _|_|_|_|  _|                                                       |
+//  _|    _|  _|        _|    _|  _|            _|            _|_|_|      _|_|_|  _|_|_|      _|_|_|    _|_|       |
+//  _|    _|  _|_|_|    _|    _|    _|_|        _|_|_|    _|  _|    _|  _|    _|  _|    _|  _|        _|_|_|_|     |
+//  _|    _|  _|        _|    _|        _|      _|        _|  _|    _|  _|    _|  _|    _|  _|        _|           |
+//  _|_|_|    _|_|_|_|    _|_|    _|_|_|        _|        _|  _|    _|    _|_|_|  _|    _|    _|_|_|    _|_|_|     |
+// =================================================================================================================
+// ========================= PreIDOToken ========================
+// ==============================================================
+// DEUS Finance: https://github.com/DeusFinance
+
+// Primary Author(s)
+// Vahid Gh: https://github.com/vahid-dev
+// MH Shoara: 
+// Peyman: 
 
 pragma solidity ^0.8.10;
 
@@ -344,12 +359,6 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
 		emit WithdrawFee(to, amount);
 	}
 
-	function setFee(uint32 _fee) external onlyOwner {
-		require(_fee <= scale, "PreIDOToken: invalid _fee");
-		fee = _fee;
-		emit FeeSet(_fee);
-	}
-
 	receive() external payable {
 		revert();
 	}
@@ -367,7 +376,6 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
 	event Claim(address user, uint256 amount);
 	event ClaimPeriodSet(uint256 _startBlock, uint256 _endBlock);
 	event ClaimRatioSet(uint32 _claimRatio);
-	event FeeSet(uint256 _fee);
 }
 
 //Dar panah khoda
