@@ -8,17 +8,21 @@ function sleep(ms) {
 async function main() {
     const _factory = "0x0000000000000000000000000000000000000001"
     const _ammID = 0
-    const _fee = 100
+    const _fee = 0
     const _collateralAddress = "0x19875868EfC944561405EeEaBe153354ACA4D071"
-    const _startBlock = 9716270
+    const _startBlock = 0
     const _cw = "250000"
+    const _collateralReserve = "1000000000000000000"
     const _name = "Test PreIDO Token"
     const _symbol = "TPT"
 
     // deploy power
     const PowerContract = await hre.ethers.getContractFactory("Power");
-    const power = await PowerContract.deploy();
-    await power.deployed();
+    // const power = await PowerContract.deploy();
+    // await power.deployed();
+    power = PowerContract.attach("0x881ec14C2457EbC75c7DE9AE9641619386175F4f");
+
+    console.log("Power deployed to:", power.address);
 
     const PreIDOTokenContract = await hre.ethers.getContractFactory("PreIDOToken");
 
@@ -27,17 +31,19 @@ async function main() {
     await PreIDOToken.deployed();
     console.log("PreIDOToken deployed to:", PreIDOToken.address);
 
-    await sleep(60000);
+    await PreIDOToken.setState(_collateralReserve, _cw);
+
+    await sleep(90000);
     //////////////////////////////////////////////////////////////////////////////
-    await hre.run("verify:verify", {
-        address: power.address,
-        constructorArguments: [],
-    });
+    // await hre.run("verify:verify", {
+    //     address: power.address,
+    //     constructorArguments: [],
+    // });
     await hre.run("verify:verify", {
         address: PreIDOToken.address,
         constructorArguments: [_factory, _ammID, _fee, _collateralAddress, power.address, _startBlock, _cw, _name, _symbol],
     });
-    
+    //////////////////////////////////////////////////////////////////////////////
 }
 
 // We recommend this pattern to be able to use async/await everywhere
