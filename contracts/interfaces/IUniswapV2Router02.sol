@@ -1,3 +1,5 @@
+pragma >=0.8.10;
+
 interface IUniswapV2Router02 {
     function factory() external pure returns (address);
     function WETH() external pure returns (address);
