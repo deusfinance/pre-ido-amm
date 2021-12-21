@@ -58,7 +58,7 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
     /* ========== EVENTS ========== */
 
     event Buy(address user, uint idoAmount, uint collateralAmount, uint feeAmount);
-    event Sell(address user, uint collateralAmount, uint idoAmount, uint feeAmount);
+    event Sell(address user, uint idoAmount, uint collateralAmount, uint feeAmount);
     event WithdrawCollateral(address to, uint amount);
     event WithdrawFee(address to, uint amount);
     event WhiteListActivated(bool activeWhiteList);
@@ -165,7 +165,7 @@ contract PreIDOToken is ReentrancyGuard, ERC20, Ownable {
 
         totalFee = totalFee + feeAmount;
 
-        emit Sell(user, collateralAmount, idoAmount, feeAmount);
+        emit Sell(user, idoAmount, collateralAmount, feeAmount);
     }
 
     function buyFor(
