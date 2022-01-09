@@ -1,1 +1,2 @@
-# Automatic-market-maker-AMM-V2
+# DEPRICATED
+## Pre IDO AMM
